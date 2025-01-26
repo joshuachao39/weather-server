@@ -15,8 +15,8 @@ def get_geodata(city_name: str, state_name: str = "", country_code: str = ""):
     try:
         url = f"http://api.openweathermap.org/geo/1.0/direct?q={city_name}{',' + state_name if state_name else ''}{',' + country_code if country_code else ''}&limit=1&appid={API_KEY}"
         response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()[0]
+        if response.status_code == 200:            
+            return response.json()[0] if response.json() else None
         else:
             return None
     except requests.exceptions.RequestException as e:
@@ -51,7 +51,7 @@ async def get_weather(city_name: str, state_name: str = "", country_code: str = 
         geodata = get_geodata(city_name, state_name, country_code)
         if not geodata:
             raise HTTPException(status_code=500, detail="Failed to reach geolocation server/Could not find geolocation data")
-        state_name = geodata["state"]
+        state_name = geodata["state"] if "state" in geodata else ""
         country_code = geodata["country"]
         lat = geodata["lat"]
         long = geodata["lon"]
@@ -75,7 +75,7 @@ async def get_weather(city_name: str, state_name: str = "", country_code: str = 
                     cursor.execute(f"""
                                    UPDATE weather_data
                                    SET weather = '{encodedWeather}', timestamp = {now}
-                                   WHERE city = {city_name}, state = {state_name}, country = {country_code}
+                                   WHERE city = '{city_name}' AND state = '{state_name}' AND country = '{country_code}'
                                    """)
                     conn.commit()
                     print("Successfully retrieved weather from DB and triggered update")
@@ -132,7 +132,7 @@ async def remove_weather_history(city_name: str, state_name: str = "", country_c
         geodata = get_geodata(city_name, state_name, country_code)
         if not geodata:
             raise HTTPException(status_code=500, detail="Failed to reach geolocation server/Could not find geolocation data")
-        state_name = geodata["state"]
+        state_name = geodata["state"] if "state" in geodata else ""
         country_code = geodata["country"]
     
     with sqlite3.connect("weather.db") as conn:
@@ -141,12 +141,12 @@ async def remove_weather_history(city_name: str, state_name: str = "", country_c
             cursor.execute(f"""
                             UPDATE weather_data
                             SET weather = '', timestamp = {int(time.time())}
-                            WHERE city = {city_name}, state = {state_name}, country = {country_code}
+                            WHERE city = '{city_name}' AND state = '{state_name}' AND country = '{country_code}'
                             """)
             conn.commit()
             return {"result": True}
         except sqlite3.OperationalError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to remove from db: incorrect input maybe?")
+            raise HTTPException(status_code=500, detail=f"Failed to remove from db: incorrect input maybe? {e}")
 
 @app.get("/retrieve-all-weather")
 async def retrieve_all_weather():
@@ -156,8 +156,9 @@ async def retrieve_all_weather():
         try:
             res = cursor.execute("SELECT * from weather_data")
             for row in res.fetchall():
-                decodedWeather = base64.urlsafe_b64decode(row[5])
-                ret[f"{row[0]}.{row[1]}.{row[2]}"] = json.loads(decodedWeather)
+                if row[5]:
+                    decodedWeather = base64.urlsafe_b64decode(row[5])
+                    ret[f"{row[0]}.{row[1]}.{row[2]}"] = json.loads(decodedWeather)
             return ret
         except sqlite3.OperationalError as e:
             raise HTTPException(status_code=500, detail=f"Failed to remove from db: incorrect input maybe?")
